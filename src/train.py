@@ -79,8 +79,16 @@ def main():
     
     # Save visualization images
     os.makedirs('outputs', exist_ok=True)
-    visualize_frames([frames[0], frames[frames.shape[0]//2], frames[-1]], title='Original Frames')
-    visualize_frames([generated_frames[0], generated_frames[len(generated_frames)//2], generated_frames[-1]], title='Generated Frames')
+    visualize_frames(
+        [frames[0], frames[frames.shape[0]//2], frames[-1]],
+        title='Original Frames',
+        save_path='outputs/original_frames.png'
+    )
+    visualize_frames(
+        [generated_frames[0], generated_frames[len(generated_frames)//2], generated_frames[-1]],
+        title='Generated Frames',
+        save_path='outputs/generated_frames.png'
+    )
 
 if __name__ == '__main__':
     main()
