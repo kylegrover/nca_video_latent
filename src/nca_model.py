@@ -1,3 +1,4 @@
+# src/nca_model.py
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -21,16 +22,24 @@ class NCA(nn.Module):
         self.hidden_channels = hidden_channels
         self.num_steps = num_steps
         
-        self.conv = nn.Conv2d(input_channels + hidden_channels, hidden_channels, kernel_size=3, padding=1)
         self.nca_block = NCABlock(hidden_channels)
+        self.decoder = nn.Conv2d(hidden_channels, input_channels, kernel_size=1)
     
-    def forward(self, x, steps=None):
+    def forward(self, hidden_state, steps=None):
+        """
+        Args:
+            hidden_state (torch.Tensor): Tensor of shape [B, hidden_channels, H, W]
+            steps (int, optional): Number of update steps. Defaults to self.num_steps.
+        
+        Returns:
+            torch.Tensor: Generated frame of shape [B, input_channels, H, W]
+            torch.Tensor: Updated hidden state of shape [B, hidden_channels, H, W]
+        """
         if steps is None:
             steps = self.num_steps
         for _ in range(steps):
-            # Apply NCA block
-            delta = self.nca_block(x)
-            x = x + delta
-            # Clamp to [0, 1]
-            x = torch.clamp(x, 0.0, 1.0)
-        return x
+            delta = self.nca_block(hidden_state)
+            hidden_state = hidden_state + delta
+            hidden_state = torch.clamp(hidden_state, 0.0, 1.0)
+        output = self.decoder(hidden_state)
+        return output, hidden_state
