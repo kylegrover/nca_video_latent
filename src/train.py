@@ -13,8 +13,30 @@ import piq  # For SSIM loss
 
 import logging
 
+def check_gpu_status():
+    if torch.cuda.is_available():
+        print(f"CUDA Device Count: {torch.cuda.device_count()}")
+        print(f"Current CUDA Device: {torch.cuda.current_device()}")
+        print(f"CUDA Device Name: {torch.cuda.get_device_name(0)}")
+        return True
+    else:
+        print("CUDA is not available. Running on CPU.")
+        return False
+
 def train_nca(nca, frames, num_epochs=1000, learning_rate=1e-4, device='cuda'):
-    nca.to(device)
+    # Check GPU status before training
+    is_cuda_available = check_gpu_status()
+    if not is_cuda_available and device == 'cuda':
+        print("WARNING: CUDA requested but not available. Falling back to CPU.")
+        device = 'cpu'
+    
+    print(f"Training on device: {device}")
+    
+    # Move model to device and print memory usage if using GPU
+    nca = nca.to(device)
+    if device == 'cuda':
+        print(f"Initial GPU Memory Allocated: {torch.cuda.memory_allocated(0) / 1024**2:.2f} MB")
+    
     optimizer = optim.AdamW(nca.parameters(), lr=learning_rate, weight_decay=1e-5)
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.1)
     mse_criterion = nn.MSELoss()
@@ -37,9 +59,11 @@ def train_nca(nca, frames, num_epochs=1000, learning_rate=1e-4, device='cuda'):
         hidden_state = nca.encoder(initial_frame)  # Shape: [1, hidden_channels, H, W]
         hidden_state = torch.clamp(hidden_state, 0.0, 1.0)
         
-        # Weighting for the different losses
-        alpha = 1.0 # MSE loss coefficient
-        beta = 0.3  # SSIM loss coefficient
+        # Print GPU memory usage during first epoch
+        if epoch == 0 and device == 'cuda':
+            print(f"GPU Memory after initialization: {torch.cuda.memory_allocated(0) / 1024**2:.2f} MB")
+        
+        alpha = 1.0
         
         for t in range(frames_tensor.shape[0]):
             target = frames_tensor[t].unsqueeze(0)  # Shape: [1, C, H, W]
