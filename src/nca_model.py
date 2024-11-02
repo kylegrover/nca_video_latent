@@ -11,19 +11,34 @@ class NCABlock(nn.Module):
         self.activation = nn.ReLU(inplace=True)
     
     def forward(self, x):
+        residual = x
         out = self.activation(self.conv1(x))
         out = self.conv2(out)
+        out += residual  # Residual connection
+        out = torch.clamp(out, 0.0, 1.0)
         return out
 
 class NCA(nn.Module):
-    def __init__(self, input_channels=3, hidden_channels=16, num_steps=10):
+    def __init__(self, input_channels=3, hidden_channels=32, num_steps=10, num_blocks=3):
         super(NCA, self).__init__()
         self.input_channels = input_channels
         self.hidden_channels = hidden_channels
         self.num_steps = num_steps
         
-        self.nca_block = NCABlock(hidden_channels)
-        self.decoder = nn.Conv2d(hidden_channels, input_channels, kernel_size=1)
+        # Multiple NCABlocks for increased capacity
+        self.nca_blocks = nn.Sequential(*[NCABlock(hidden_channels) for _ in range(num_blocks)])
+        self.decoder = nn.Sequential(
+            nn.Conv2d(hidden_channels, input_channels, kernel_size=1),
+            nn.Sigmoid()  # Ensures output is in [0, 1]
+        )
+        
+        # Encoder to initialize hidden state from input frame
+        self.encoder = nn.Sequential(
+            nn.Conv2d(input_channels, hidden_channels, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(hidden_channels, hidden_channels, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True)
+        )
     
     def forward(self, hidden_state, steps=None):
         """
@@ -38,7 +53,7 @@ class NCA(nn.Module):
         if steps is None:
             steps = self.num_steps
         for _ in range(steps):
-            delta = self.nca_block(hidden_state)
+            delta = self.nca_blocks(hidden_state)
             hidden_state = hidden_state + delta
             hidden_state = torch.clamp(hidden_state, 0.0, 1.0)
         output = self.decoder(hidden_state)
