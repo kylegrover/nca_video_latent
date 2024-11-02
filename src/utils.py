@@ -17,17 +17,11 @@ def extract_frames(video_path, output_dir, max_size=128):
     (
         ffmpeg
         .input(video_path)
+        .filter('crop', 'min(iw,ih)', 'min(iw,ih)')  # Crop to a square
+        .filter('scale', max_size, max_size)
         .output(os.path.join(output_dir, 'frame_%05d.png'))
         .run(overwrite_output=True)
     )
-
-    # Resize frames
-    frame_files = sorted([f for f in os.listdir(output_dir) if f.endswith('.png')])
-    for file in tqdm(frame_files, desc="Resizing frames"):
-        img_path = os.path.join(output_dir, file)
-        img = Image.open(img_path)
-        img.thumbnail((max_size, max_size), resample=Image.Resampling.LANCZOS)
-        img.save(img_path)
 
 def load_frames(folder, max_size=128):
     frame_files = sorted([f for f in os.listdir(folder) if f.endswith(('.png', '.jpg', '.jpeg'))])
