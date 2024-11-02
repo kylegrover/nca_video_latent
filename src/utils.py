@@ -1,4 +1,3 @@
-# src/utils.py
 import os
 import cv2
 import ffmpeg
@@ -30,10 +29,11 @@ def load_frames(folder, max_size=128):
         img_path = os.path.join(folder, file)
         img = Image.open(img_path).convert('RGB')
         # img.thumbnail((max_size, max_size), resample=Image.Resampling.LANCZOS)
-        frames.append(np.array(img))
-    return np.array(frames) / 255.0  # Normalize to [0, 1]
+        frames.append(np.array(img, dtype=np.float32))
+    return np.array(frames, dtype=np.float32) / 255.0  # Normalize to [0, 1]
 
 def save_model(model, path):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     torch.save(model.state_dict(), path)
 
 def load_model(model, path, device='cuda'):
@@ -43,14 +43,36 @@ def load_model(model, path, device='cuda'):
     return model
 
 def visualize_frames(frames, title='Frames', save_path=None):
-    fig, axes = plt.subplots(1, len(frames), figsize=(15, 5))
-    if len(frames) == 1:
+    # Ensure the frames are in the correct format and range
+    processed_frames = []
+    for frame in frames:
+        if torch.is_tensor(frame):
+            frame = frame.detach().cpu().numpy()
+        
+        # Ensure float32 type
+        frame = frame.astype(np.float32)
+        
+        # Ensure values are in [0, 1]
+        if frame.max() > 1.0 or frame.min() < 0.0:
+            frame = np.clip(frame, 0.0, 1.0)
+            
+        processed_frames.append(frame)
+
+    # Create visualization
+    fig, axes = plt.subplots(1, len(processed_frames), figsize=(15, 5))
+    if len(processed_frames) == 1:
         axes = [axes]
-    for idx, frame in enumerate(frames):
-        axes[idx].imshow(frame)
-        axes[idx].axis('off')
+    
+    for ax, frame in zip(axes, processed_frames):
+        ax.imshow(frame)
+        ax.axis('off')
+    
     plt.suptitle(title)
+    plt.tight_layout()
+    
     if save_path:
+        # Ensure the output directory exists
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
         plt.savefig(save_path)
     else:
         plt.show()
