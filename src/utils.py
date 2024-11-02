@@ -29,7 +29,7 @@ def load_frames(folder, max_size=128):
     for file in tqdm(frame_files, desc="Loading frames"):
         img_path = os.path.join(folder, file)
         img = Image.open(img_path).convert('RGB')
-        img.thumbnail((max_size, max_size), resample=Image.Resampling.LANCZOS)
+        # img.thumbnail((max_size, max_size), resample=Image.Resampling.LANCZOS)
         frames.append(np.array(img))
     return np.array(frames) / 255.0  # Normalize to [0, 1]
 
