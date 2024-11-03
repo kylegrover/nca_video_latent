@@ -8,3 +8,4 @@ ffmpeg-python
 tqdm
 matplotlib
 piq
+pynvml
