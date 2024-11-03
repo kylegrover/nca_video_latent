@@ -9,6 +9,7 @@ from nca_model import NCA
 from utils import extract_frames, load_frames, save_model, visualize_frames
 
 import torch.nn as nn
+import torch.amp as amp
 import piq  # For SSIM loss
 
 import logging
@@ -32,63 +33,58 @@ def train_nca(nca, frames, num_epochs=1000, learning_rate=1e-4, device='cuda'):
     
     print(f"Training on device: {device}")
     
-    # Move model to device and print memory usage if using GPU
+    # Move model to device
     nca = nca.to(device)
-    if device == 'cuda':
-        print(f"Initial GPU Memory Allocated: {torch.cuda.memory_allocated(0) / 1024**2:.2f} MB")
-    
-    optimizer = optim.AdamW(nca.parameters(), lr=learning_rate, weight_decay=1e-5)
-    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.1)
+
+    optimizer = optim.RAdam(nca.parameters(), lr=learning_rate, weight_decay=1e-5)
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs)
     mse_criterion = nn.MSELoss()
     ssim_criterion = piq.SSIMLoss(data_range=1.0)
     
-    # Configure logging
-    os.makedirs('outputs', exist_ok=True)
-    logging.basicConfig(filename='outputs/training.log', level=logging.INFO, 
-                        format='%(asctime)s:%(levelname)s:%(message)s')
-    
     # Convert frames to torch tensors
-    frames_tensor = torch.tensor(frames).permute(0, 3, 1, 2).float().to(device)  # Shape: (T, C, H, W)
+    frames_tensor = torch.tensor(frames).permute(0, 3, 1, 2).float().to(device)
+
+    # Scaler for mixed precision
+    scaler = amp.GradScaler("cuda")
     
     for epoch in tqdm(range(num_epochs), desc="Training NCA"):
         epoch_loss = 0.0
-        optimizer.zero_grad()
         
-        # Initialize hidden state with the first frame using encoder
-        initial_frame = frames_tensor[0].unsqueeze(0)  # Shape: [1, C, H, W]
-        hidden_state = nca.encoder(initial_frame)  # Shape: [1, hidden_channels, H, W]
+        initial_frame = frames_tensor[0].unsqueeze(0)
+        hidden_state = nca.encoder(initial_frame)
         hidden_state = torch.clamp(hidden_state, 0.0, 1.0)
         
-        # Print GPU memory usage during first epoch
-        if epoch == 0 and device == 'cuda':
-            print(f"GPU Memory after initialization: {torch.cuda.memory_allocated(0) / 1024**2:.2f} MB")
+        alpha = 1.0  # MSE loss coefficient
+        beta = 0.3   # SSIM loss coefficient
         
-        alpha = 1.0
-        
+        optimizer.zero_grad()
+
         for t in range(frames_tensor.shape[0]):
-            target = frames_tensor[t].unsqueeze(0)  # Shape: [1, C, H, W]
-            output, hidden_state = nca(hidden_state)  # output: [1, C, H, W], hidden_state: [1, hidden_channels, H, W]
+            target = frames_tensor[t].unsqueeze(0)
             
-            # Compute loss
-            mse_loss = mse_criterion(output, target)
-            ssim_loss = ssim_criterion(output, target)
-            total_loss = total_loss = alpha * mse_loss + beta * (1 - ssim_loss)  # Encourages higher SSIM
-            epoch_loss += total_loss
+            # Using autocast for mixed precision
+            with amp.autocast('cuda'):
+                output, hidden_state = nca(hidden_state)
+                mse_loss = mse_criterion(output, target)
+                ssim_loss = ssim_criterion(output, target)
+                total_loss = alpha * mse_loss + beta * (1 - ssim_loss)
             
-            # Backpropagation
-            total_loss.backward()
-            # Gradient clipping
-            torch.nn.utils.clip_grad_norm_(nca.parameters(), max_norm=1.0)
-            # Detach hidden state to prevent backpropagating through time
+            # Backward pass, with scaling
+            scaler.scale(total_loss).backward()
             hidden_state = hidden_state.detach()
         
-        optimizer.step()
+        # Update weights with scaled gradients
+        scaler.step(optimizer)
+        # Update the scale for next iteration
+        scaler.update()
         scheduler.step()
+
+        epoch_loss += total_loss.item()
         epoch_loss /= frames_tensor.shape[0]
         
         if (epoch + 1) % 100 == 0 or epoch == 0:
-            print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {epoch_loss.item():.6f}")
-            logging.info(f"Epoch {epoch + 1}/{num_epochs}, Loss: {epoch_loss.item():.6f}")
+            print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {epoch_loss:.6f}")
+            logging.info(f"Epoch {epoch + 1}/{num_epochs}, Loss: {epoch_loss:.6f}")
             # Generate and save sample frames
             with torch.no_grad():
                 # Re-initialize hidden state
@@ -131,7 +127,7 @@ def main():
         extract_frames(args.video, args.frames_dir, max_size=args.max_size)
     frames = load_frames(args.frames_dir, max_size=args.max_size)  # Shape: (num_frames, H, W, 3)
 
-    nca = NCA(input_channels=3, hidden_channels=32, num_steps=10, num_blocks=3)
+    nca = NCA(input_channels=3, hidden_channels=32, num_steps=10, num_blocks=3).to(args.device)
     trained_nca = train_nca(nca, frames, num_epochs=args.num_epochs, learning_rate=args.learning_rate, device=args.device)
     os.makedirs(os.path.dirname(args.model_save_path), exist_ok=True)
     save_model(trained_nca, args.model_save_path)
